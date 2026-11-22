@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1 (2026-11-22)
+
+- Tap a bowler's Avg or Hcp on the recap to edit it; a handicap you type yourself shows in orange.
+- Fix a bowler's name from the recap (it changes everywhere).
+- Picking a different bowler fills in their usual average right away, and you can adjust it before saving.
+- Average and handicap can be set when filling an empty position.
+
 ## 0.1.0 (2026-11-22)
 
 First version: live recap sheet.
