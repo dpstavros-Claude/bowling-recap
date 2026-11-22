@@ -13,6 +13,12 @@ A phone-first web app for filling in a bowling league recap sheet live, and keep
 
 The app updates itself: when a new version is published, reopen it to get it. The version number is at the bottom of the home and backup screens.
 
+## Importing history from LeaguePals
+
+In the app, open **Backup & sharing → Import from LeaguePals** and follow the three steps there. In short: add the *Bowling Recap import* bookmark, open your league on leaguepals.com, tap the bookmark, then choose **Send to Bowling Recap** (or **Download file** and pick it in the app). Repeat for each past league or season. It uses the same public scores LeaguePals shows on the page; your LeaguePals login is never read.
+
+The home-screen app on iPhone keeps its own data, separate from Safari, so on a phone use **Download file**, or import on a computer and share the league to your phone.
+
 ## How scoring works
 
 All rules are set per session (**League → Session rules & roster**):
@@ -36,6 +42,7 @@ npm start         # serves the app at http://localhost:8000
 - `js/scoring.js` pure scoring functions (tested in `tests/`)
 - `js/store.js` data model, localStorage, backup and merge
 - `js/app.js` screens and recap sheet
+- `js/leaguepals.js` converts LeaguePals data (tested); `js/lp-export.js` is the script the bookmark loads on leaguepals.com
 - `sw.js` offline cache. **Bump `VERSION` in both `js/version.js` and `sw.js` for every release**, and add a line to `CHANGELOG.md`.
 
 Every push to `main` runs the tests and deploys to GitHub Pages (`.github/workflows/pages.yml`). Pull requests run the tests only.
