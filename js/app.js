@@ -3,6 +3,7 @@
 import { VERSION } from './version.js';
 import { computeMatch, handicapFor, DEFAULT_RULES, totalPointsAvailable } from './scoring.js';
 import * as S from './store.js';
+import { convertLeaguePals, RAW_KIND } from './leaguepals.js';
 
 const $view = document.getElementById('view');
 const $title = document.getElementById('title');
@@ -58,6 +59,7 @@ const routes = [
   [/^#\/night\/([^/]+)\/edit$/, (id) => viewNightSetup(null, id)],
   [/^#\/team\/([^/]+)$/, (id) => viewTeam(id)],
   [/^#\/backup$/, viewBackup],
+  [/^#\/import-lp$/, viewImportLp],
 ];
 
 function render() {
@@ -482,6 +484,7 @@ function viewNight(id) {
       <span class="muted small">${pU.complete ? 'Final' : `Projected · ${pU.final}-${pT.final} official`} · of ${m.totalPoints}</span>
       <span><b>${pT.complete ? pT.final : pT.projected}</b> ${esc(S.teamName(n.them.teamId))}</span>
     </div>
+    ${h2hBanner(n, l)}
     <div class="recap">
       ${sideTable(n, s, oddKey, n.lanes.odd, m.A, m.pointsA)}
       ${sideTable(n, s, evenKey, n.lanes.even, m.B, m.pointsB)}
@@ -494,6 +497,23 @@ function viewNight(id) {
       <a class="btn" href="#/night/${n.id}/edit">Date, lanes, opponent</a>
     </div>`;
   viewNight.ctx = { n, s, l };
+}
+
+/** Head-to-head summary against tonight's opponent (other nights only). */
+function h2hBanner(n, l) {
+  const past = S.nightsOfLeague(l.id).filter((x) => x.id !== n.id && x.them.teamId === n.them.teamId);
+  if (!past.length) return '';
+  let pf = 0, pa = 0, w = 0, lo = 0, t = 0;
+  for (const x of past) {
+    const s = S.get('sessions', x.sessionId);
+    const m = matchFor(x, s);
+    const us = x.ourLane === 'odd' ? m.pointsA : m.pointsB;
+    const them = x.ourLane === 'odd' ? m.pointsB : m.pointsA;
+    pf += us.final; pa += them.final;
+    if (us.final > them.final) w++; else if (us.final < them.final) lo++; else t++;
+  }
+  const last = past[past.length - 1];
+  return `<a class="h2h" href="#/team/${n.them.teamId}">vs ${esc(S.teamName(n.them.teamId))} before: <b>${past.length}</b> night${past.length === 1 ? '' : 's'}, <b>${w}-${lo}${t ? `-${t}` : ''}</b>, points ${pf}-${pa} · last ${esc(fmtDate(last.date))} ›</a>`;
 }
 
 /** "Spencer Stavros" -> "Spencer S." so names fit the recap on a phone. */
@@ -857,6 +877,15 @@ function viewBackup() {
     <h2>Import a backup or shared league</h2>
     <p class="muted small">Importing merges: new nights are added, and where both copies changed the same thing, the most recent edit wins. Nothing else is erased.</p>
     <label class="btn file">Choose file…<input type="file" accept="application/json,.json" data-import hidden></label>
+    <h2>Import from LeaguePals</h2>
+    <p class="small">Brings in every night your team bowled in a LeaguePals league, with both lineups, averages, handicaps and points. Easiest on a computer; share the league to your phone afterwards.</p>
+    <ol class="small">
+      <li>Add this bookmark: on a computer, drag <a class="chip" href="${esc(BOOKMARKLET)}" data-act="noop">Bowling Recap import</a> to your bookmarks bar. On a phone, <button class="chip" data-act="copyBookmarklet">copy the bookmark code</button>, bookmark any page, then edit that bookmark and paste the code as its address.</li>
+      <li>Open your league on leaguepals.com (the page with standings and last week's scores) and tap the bookmark.</li>
+      <li>Choose <b>Send to Bowling Recap</b>, or <b>Download file</b> and pick it here:</li>
+    </ol>
+    <label class="btn file">Choose LeaguePals file…<input type="file" accept="application/json,.json" data-import hidden></label>
+    <p class="muted small">Importing again later is safe: nights already here are updated, and nights you entered or unlocked in the app are kept as they are. Repeat for each past league or season.</p>
     <h2>Tips</h2>
     <ul class="small">
       <li>On iPhone, tap Share, then <b>Add to Home Screen</b>. The app then opens full screen, works without a signal, and Safari is less likely to clear its data.</li>
@@ -891,6 +920,76 @@ function stamp() {
 }
 function slug(s) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+// ---------- LeaguePals import ----------
+
+const APP_ORIGIN = 'https://dpstavros-claude.github.io';
+const BOOKMARKLET = "javascript:(function(){var s=document.createElement('script');s.src='" + APP_ORIGIN + "/bowling-recap/js/lp-export.js?'+Date.now();document.body.appendChild(s);})()";
+let pendingLp = null;
+
+window.addEventListener('message', (e) => {
+  if (!/^https:\/\/(www\.)?leaguepals\.com$/.test(e.origin)) return;
+  if (!e.data || e.data.type !== 'leaguepals-raw' || !e.data.payload || e.data.payload.kind !== RAW_KIND) return;
+  pendingLp = e.data.payload;
+  if (location.hash === '#/import-lp') viewImportLp(); else go('#/import-lp');
+});
+
+function viewImportLp() {
+  setHeader('Import from LeaguePals', '#/backup');
+  if (!pendingLp) {
+    if (window.opener) window.opener.postMessage({ type: 'bowling-recap-ready' }, '*');
+    $view.innerHTML = `<div class="empty"><p>Waiting for data from LeaguePals…</p>
+      <p class="muted small">Started from the LeaguePals bookmark? This fills in by itself in a moment. Otherwise choose a downloaded file:</p>
+      <label class="btn file">Choose LeaguePals file…<input type="file" accept="application/json,.json" data-import hidden></label></div>`;
+    return;
+  }
+  const raw = pendingLp;
+  const teams = new Map();
+  for (const t of (raw.league && raw.league.teams) || []) if (!/^bye$/i.test(t.name)) teams.set(t._id, t.name);
+  for (const m of raw.matches || []) for (const t of m.teams || []) if (t.team && !/^bye$/i.test(t.team.name)) teams.set(t.team._id, t.team.name);
+  const sel = viewImportLp.team && teams.has(viewImportLp.team) ? viewImportLp.team : (teams.has(raw.teamId) ? raw.teamId : guessOurTeam(teams));
+  let bundle = null, err = null;
+  try { bundle = sel ? convertLeaguePals(raw, sel) : null; } catch (x) { err = x.message; }
+  const bad = bundle ? bundle.checks.filter((c) => !c.ok) : [];
+  $view.innerHTML = `
+    <div class="card">
+      <div class="card-title">${esc(raw.league && raw.league.name)}</div>
+      ${bundle ? `<div class="muted">Imports as league <b>${esc(bundle.leagueName)}</b>, session <b>${esc(bundle.sessionName)}</b></div>` : ''}
+    </div>
+    <label class="field"><span>Your team in this league</span>
+      <select data-change="lpTeam"><option value="">Pick your team…</option>
+        ${[...teams].sort((a, b) => a[1].localeCompare(b[1])).map(([id, name]) => `<option value="${esc(id)}" ${id === sel ? 'selected' : ''}>${esc(name)}</option>`).join('')}
+      </select></label>
+    ${err ? `<p class="banner">${esc(err)}</p>` : ''}
+    ${bundle ? `
+      <p><b>${bundle.nights.length}</b> nights to import · ${bundle.teams.length - 1} opponent teams · ${bundle.bowlers.length} bowlers</p>
+      <p class="small ${bad.length ? '' : 'muted'}">${bad.length
+        ? `Points differ from LeaguePals on ${bad.length} night(s): ${bad.map((c) => `${esc(fmtDate(c.date))} (LeaguePals ${c.lp.join('-')}, here ${c.calc.join('-')})`).join('; ')}. Check the session's points rules after importing.`
+        : `Points match LeaguePals on all ${bundle.checks.length} nights.`}</p>
+      <section class="list">${bundle.nights.slice().reverse().map((n) => {
+        const opp = bundle.teams.find((t) => t.lpId === n.oppLpId);
+        return `<div class="row"><span><b>${esc(fmtDate(n.date))}</b> vs ${esc(opp ? opp.name : '?')}</span><span class="muted">Lanes ${esc(n.lanes.odd)}-${esc(n.lanes.even)} · ${n.lpPoints.join('-')}</span></div>`;
+      }).join('')}</section>
+      <button class="btn primary big" data-act="lpImport" ${bundle.nights.length ? '' : 'disabled'}>Import ${bundle.nights.length} nights</button>` : ''}`;
+  viewImportLp.bundle = bundle;
+}
+
+function guessOurTeam(teams) {
+  const ourNames = new Set(S.all('leagues').map((l) => (S.teamName(l.ourTeamId) || '').toLowerCase()));
+  for (const [id, name] of teams) if (ourNames.has(name.toLowerCase())) return id;
+  return null;
+}
+
+function runLpImport() {
+  const b = viewImportLp.bundle;
+  if (!b) return;
+  const r = S.importLeaguePals(b);
+  pendingLp = null;
+  viewImportLp.team = null;
+  toast(`Imported ${r.added} new, ${r.updated} updated${r.kept ? `, kept ${r.kept} of yours` : ''}`);
+  viewLeague.sel = r.sessionId;
+  go(`#/league/${r.leagueId}`);
 }
 
 // ---------- event wiring ----------
@@ -975,6 +1074,12 @@ document.addEventListener('click', async (e) => {
       await shareJson(S.exportData([id]), `bowling-recap-${slug(l.name)}-${stamp()}.json`);
       return;
     }
+    case 'noop': { e.preventDefault(); toast('Drag this link to your bookmarks bar'); return; }
+    case 'copyBookmarklet': {
+      try { await navigator.clipboard.writeText(BOOKMARKLET); toast('Bookmark code copied'); } catch { prompt('Copy this bookmark code:', BOOKMARKLET); }
+      return;
+    }
+    case 'lpImport': return runLpImport();
     case 'resetAll': {
       if (!confirm('Erase every league, night and bowler on this phone? Save a backup first if unsure.')) return;
       S.resetAll();
@@ -987,6 +1092,7 @@ document.addEventListener('change', async (e) => {
   const el = e.target;
   if (el.matches('[data-change="pickSession"]')) { viewLeague.sel = el.value; return render(); }
   if (el.matches('[data-change="whoPick"]')) return onWhoPick(el);
+  if (el.matches('[data-change="lpTeam"]')) { viewImportLp.team = el.value; return viewImportLp(); }
   if (el.matches('[data-change="oppPick"]')) {
     document.querySelector('[data-newteam]').hidden = el.value !== '__new';
     return;
@@ -996,6 +1102,7 @@ document.addEventListener('change', async (e) => {
     if (!file) return;
     try {
       const data = JSON.parse(await file.text());
+      if (data && data.kind === RAW_KIND) { pendingLp = data; return go('#/import-lp'); }
       const c = S.mergeData(data);
       toast(`Imported: ${c.added} new, ${c.updated} updated`);
       go('#/');

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0 (2026-11-22)
+
+- Import from LeaguePals: a bookmark run on a leaguepals.com league page sends every night your team bowled (both lineups, averages, handicaps, subs, blinds, vacants, lanes) to the app, or saves it as a file to import. Points are recalculated and compared with LeaguePals before importing.
+- Re-importing is safe: imported nights are updated; nights you entered or unlocked in the app are kept.
+- Imported bowlers join the session roster, so averages and lineups prefill for the next night.
+- The recap shows your record against tonight's opponent (nights, W-L, points, last time you met).
+
 ## 0.1.1 (2026-11-22)
 
 - Tap a bowler's Avg or Hcp on the recap to edit it; a handicap you type yourself shows in orange.

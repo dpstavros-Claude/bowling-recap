@@ -54,6 +54,8 @@ main { padding: 12px max(12px, env(safe-area-inset-left)) 40px max(12px, env(saf
 .btn.danger { color: var(--danger); border-color: transparent; background: none; }
 .btn.big { width: 100%; min-height: 52px; font-size: 17px; margin: 10px 0; }
 .btn.file { position: relative; }
+.btn[disabled] { opacity: .5; }
+ol.small li { margin-bottom: 6px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
 .actions .btn { flex: 1 1 auto; }
 
@@ -100,6 +102,8 @@ main { padding: 12px max(12px, env(safe-area-inset-left)) 40px max(12px, env(saf
 .scorebar.final { border-color: var(--brand); }
 .scorebar > span:nth-child(2) { text-align: center; }
 
+.h2h { display: block; font-size: 13px; color: var(--muted); background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 10px; margin-bottom: 8px; }
+.h2h b { color: var(--ink); }
 .recap { display: grid; grid-template-columns: 1fr; gap: 8px; }
 .side { border-radius: var(--radius); border: 1px solid var(--line); overflow: hidden; }
 .side.us { background: var(--us); }

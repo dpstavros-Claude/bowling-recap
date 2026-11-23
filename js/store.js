@@ -266,3 +266,103 @@ export function markBackedUp() {
 export function resetAll() {
   replaceDb(emptyDb());
 }
+
+// ---------- LeaguePals import ----------
+
+const lc = (s) => String(s || '').trim().toLowerCase();
+
+/**
+ * Merge a converted LeaguePals bundle (see leaguepals.js) into local data.
+ * Re-importing is safe: records are matched by their LeaguePals ids, then by name.
+ */
+export function importLeaguePals(bundle) {
+  const sum = { leagueId: null, sessionId: null, added: 0, updated: 0, kept: 0, newBowlers: 0, newTeams: 0 };
+
+  // League (matched by name) and our team.
+  let league = all('leagues').find((l) => (bundle.lpLeagueId && (l.lpLeagueIds || []).includes(bundle.lpLeagueId)))
+    || all('leagues').find((l) => lc(l.name) === lc(bundle.leagueName));
+  if (!league) {
+    league = put('leagues', { name: bundle.leagueName, day: bundle.day ?? 2, time: bundle.time, alley: bundle.alley, travel: false, ourTeamId: null, lpLeagueIds: [] });
+  }
+  league.lpLeagueIds = [...new Set([...(league.lpLeagueIds || []), bundle.lpLeagueId].filter(Boolean))];
+  if (!league.alley && bundle.alley) league.alley = bundle.alley;
+  if (!league.time && bundle.time) league.time = bundle.time;
+  sum.leagueId = league.id;
+
+  const teamsHere = () => all('teams').filter((t) => t.leagueId === league.id);
+  const ourLp = bundle.teams.find((t) => t.lpId === bundle.ourTeamLpId);
+  let ours = league.ourTeamId ? get('teams', league.ourTeamId) : null;
+  if (!ours) {
+    ours = teamsHere().find((t) => t.lpId === bundle.ourTeamLpId) || put('teams', { leagueId: league.id, name: ourLp ? ourLp.name : 'Our team', ours: true });
+    league.ourTeamId = ours.id;
+  }
+  ours.lpId = bundle.ourTeamLpId;
+  put('teams', ours);
+  put('leagues', league);
+
+  const teamByLp = new Map([[bundle.ourTeamLpId, ours.id]]);
+  for (const t of bundle.teams) {
+    if (t.lpId === bundle.ourTeamLpId) continue;
+    let rec = teamsHere().find((x) => x.lpId === t.lpId) || teamsHere().find((x) => !x.lpId && lc(x.name) === lc(t.name));
+    if (!rec) { rec = { leagueId: league.id, name: t.name }; sum.newTeams++; }
+    rec.lpId = t.lpId;
+    put('teams', rec);
+    teamByLp.set(t.lpId, rec.id);
+  }
+
+  // Session (one LeaguePals league = one of our sessions).
+  let session = all('sessions').find((s) => s.lpLeagueId && s.lpLeagueId === bundle.lpLeagueId)
+    || sessionsOf(league.id).find((s) => lc(s.name) === lc(bundle.sessionName));
+  if (!session) {
+    session = {
+      leagueId: league.id, name: bundle.sessionName, startDate: bundle.startDate, weeks: null, skipDates: [],
+      gamesPerNight: bundle.gamesPerNight, bowlersPerTeam: bundle.bowlersPerTeam, rosterPolicy: 'subs', roster: [],
+      rules: { ...bundle.rules },
+    };
+  }
+  session.lpLeagueId = bundle.lpLeagueId;
+  if (!session.startDate) session.startDate = bundle.startDate;
+  put('sessions', session);
+  sum.sessionId = session.id;
+
+  // Bowlers.
+  const bowlerByKey = new Map();
+  for (const b of bundle.bowlers) {
+    let rec = (b.lpId && all('bowlers').find((x) => x.lpId === b.lpId)) || all('bowlers').find((x) => lc(x.name) === lc(b.name));
+    if (!rec) { rec = { name: b.name }; sum.newBowlers++; }
+    if (b.lpId) rec.lpId = b.lpId;
+    put('bowlers', rec);
+    bowlerByKey.set(b.key, rec.id);
+  }
+
+  // Nights.
+  const usCount = new Map();
+  for (const n of bundle.nights) {
+    const oppId = teamByLp.get(n.oppLpId);
+    const toSlots = (slots) => slots.map(({ bowlerKey, ...s }) => ({ ...s, bowlerId: bowlerKey ? bowlerByKey.get(bowlerKey) || null : null }));
+    const us = toSlots(n.us), them = toSlots(n.them);
+    for (const s of us) if (s.bowlerId) usCount.set(s.bowlerId, (usCount.get(s.bowlerId) || 0) + 1);
+
+    const existing = all('nights').find((x) => x.lpMatchId === n.lpMatchId);
+    const sameNight = !existing && nightsOf(session.id).find((x) => x.date === n.date && x.them.teamId === oppId);
+    if (sameNight || (existing && !existing.locked)) { sum.kept++; continue; } // entered or edited in the app: keep yours
+    const rec = existing || { sessionId: session.id };
+    Object.assign(rec, {
+      sessionId: session.id, date: n.date, lanes: n.lanes, ourLane: n.ourLane, locked: true, alley: league.alley,
+      lpMatchId: n.lpMatchId, source: 'leaguepals',
+      us: { teamId: ours.id, slots: us }, them: { teamId: oppId, slots: them },
+    });
+    put('nights', rec);
+    if (existing) sum.updated++; else sum.added++;
+  }
+
+  // Our bowlers join the session roster: regulars bowled at least half the nights.
+  const total = bundle.nights.length || 1;
+  session.roster = session.roster || [];
+  for (const [bid, cnt] of usCount) {
+    if (session.roster.some((r) => r.bowlerId === bid)) continue;
+    session.roster.push({ bowlerId: bid, role: cnt * 2 >= total ? 'regular' : 'sub' });
+  }
+  put('sessions', session);
+  return sum;
+}
