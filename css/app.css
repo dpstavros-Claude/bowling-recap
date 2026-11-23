@@ -122,6 +122,8 @@ main { padding: 12px max(12px, env(safe-area-inset-left)) 40px max(12px, env(saf
 .side td.score.vacant { color: var(--muted); font-weight: 400; cursor: default; }
 .side td.score sup { font-size: 9px; margin-left: 1px; }
 .side td.ser { font-weight: 600; }
+.side td.edit { cursor: pointer; text-decoration: underline dotted var(--line); text-underline-offset: 3px; }
+.side td.override { color: var(--accent); font-weight: 700; }
 .side td.prov { font-style: italic; color: var(--muted); font-size: 12px; overflow: visible; }
 .side tfoot td { height: 24px; font-size: 13px; }
 .side tfoot td.name { font-weight: 400; color: var(--muted); cursor: default; }

@@ -521,7 +521,8 @@ function sideTable(n, s, key, lane, T, P) {
     }).join('');
     return `<tr>
       <td class="name" data-act="slot" data-side="${key}" data-i="${i}">${name}</td>
-      <td class="${b.provisional ? 'prov' : ''}">${avg}</td><td>${b.kind === 'empty' ? '' : b.hcp}</td>
+      <td class="edit ${b.provisional ? 'prov' : ''}" data-act="slot" data-side="${key}" data-i="${i}" data-focus="avg">${avg}</td>
+      <td class="edit${isNum(slot.hcpOverride) ? ' override' : ''}" data-act="slot" data-side="${key}" data-i="${i}" data-focus="hcp">${b.kind === 'empty' ? '' : b.hcp}</td>
       ${cells}
       <td class="ser">${b.gamesKnown ? b.seriesScratch : ''}</td><td class="ser">${b.gamesKnown ? b.seriesTotal : ''}</td>
     </tr>`;
@@ -660,7 +661,7 @@ function rerenderNight() {
   window.scrollTo(0, y);
 }
 
-function openSlotEditor(side, i) {
+function openSlotEditor(side, i, focus) {
   const { n, s, l } = viewNight.ctx;
   const slot = n[side].slots[i];
   const isUs = side === 'us';
@@ -684,31 +685,61 @@ function openSlotEditor(side, i) {
   groups = groups.map(([label, ids]) => [label, ids.filter((id) => !takenIds.has(id))]).filter(([, ids]) => ids.length);
   const r = S.rulesOf(s);
   const autoHcp = handicapFor(slot.avg, r);
-  const blindToggles = slot.kind === 'bowler' ? slot.games.map((gm, g) => `
+  const blindToggles = slot.kind !== 'vacant' ? slot.games.map((gm, g) => `
     <label class="check inline-check"><input type="checkbox" data-blind="${g}" ${gm.blind ? 'checked' : ''}> G${g + 1}</label>`).join('') : '';
 
   openSheet(`
     <div class="sheet-head"><b>Position ${i + 1}</b> · ${esc(S.teamName(teamId))}</div>
     <form data-form="slot" class="form compact">
       <label class="field"><span>Bowler</span>
-        <select name="who">
+        <select name="who" data-change="whoPick">
           <option value="">— nobody yet —</option>
           <option value="__vacant" ${slot.kind === 'vacant' ? 'selected' : ''}>VACANT (${r.vacantScore} + ${r.vacantHcp})</option>
           ${groups.map(([label, ids]) => `<optgroup label="${esc(label)}">${ids.map((id) => `<option value="${id}" ${slot.bowlerId === id ? 'selected' : ''}>${esc(S.bowlerName(id))}</option>`).join('')}</optgroup>`).join('')}
         </select></label>
       <label class="field"><span>…or a new bowler</span><input name="newName" placeholder="Name" autocomplete="off"></label>
-      ${slot.kind === 'bowler' ? `
+      ${slot.kind === 'bowler' ? `<label class="field"><span>Edit this bowler's name (fixes it everywhere)</span>
+        <input name="rename" value="${esc(S.bowlerName(slot.bowlerId))}" autocomplete="off"></label>` : ''}
+      <div data-avgfields ${slot.kind === 'vacant' ? 'hidden' : ''}>
       <div class="two">
-        <label class="field"><span>Average</span><input name="avg" type="number" inputmode="numeric" value="${esc(slot.avg ?? '')}"></label>
-        <label class="field"><span>Handicap (blank = ${autoHcp})</span><input name="hcp" type="number" inputmode="numeric" value="${esc(slot.hcpOverride ?? '')}"></label>
+        <label class="field"><span>Average</span><input name="avg" type="number" inputmode="numeric" value="${esc(slot.avg ?? '')}" data-orig="${esc(slot.avg ?? '')}"></label>
+        <label class="field"><span>Handicap <span data-autohcp>(blank = ${autoHcp})</span></span><input name="hcp" type="number" inputmode="numeric" value="${esc(slot.hcpOverride ?? '')}" data-orig="${esc(slot.hcpOverride ?? '')}"></label>
       </div>
       <label class="check"><input type="checkbox" name="est" ${slot.avgEstablished ? 'checked' : ''}> Average is established
         <span class="muted small">(untick to set it from tonight's games)</span></label>
-      <div class="field"><span>Blind for games (late or left early)</span><div class="inline">${blindToggles}</div></div>` : ''}
+      <div class="field"><span>Blind for games (late or left early)</span><div class="inline">${blindToggles}</div></div>
+      </div>
       <button class="btn primary big" type="submit">Save</button>
     </form>`);
   viewNight.slotCtx = { side, i };
   void l;
+  if (focus) {
+    const el = $sheet.querySelector(`input[name="${focus}"]`);
+    if (el) setTimeout(() => { el.focus(); el.select(); }, 50);
+  }
+}
+
+/** When a different bowler is picked, show that bowler's usual average right away. */
+function onWhoPick(sel) {
+  const { n, s } = viewNight.ctx;
+  const { side } = viewNight.slotCtx;
+  const form = sel.form;
+  const fields = form.querySelector('[data-avgfields]');
+  fields.hidden = sel.value === '__vacant';
+  if (!sel.value || sel.value === '__vacant') return;
+  const d = S.defaultAverage(s, sel.value, n.date, side === 'us');
+  form.avg.value = d.avg ?? '';
+  form.avg.dataset.orig = d.avg ?? '';
+  form.hcp.value = '';
+  form.est.checked = d.established;
+  const rn = form.querySelector('[name=rename]');
+  if (rn) rn.closest('.field').hidden = true;
+  onAvgInput(form);
+}
+function onAvgInput(form) {
+  const { s } = viewNight.ctx;
+  const a = num(form.avg.value);
+  form.querySelector('[data-autohcp]').textContent = `(blank = ${handicapFor(a, S.rulesOf(s))})`;
 }
 
 function saveSlot(form) {
@@ -731,19 +762,34 @@ function saveSlot(form) {
     n[side].slots[i] = S.makeSlot(s, null, n.date, isUs);
   } else if (who === '__vacant') {
     n[side].slots[i] = { ...S.makeSlot(s, null, n.date, isUs), kind: 'vacant' };
-  } else if (who !== slot.bowlerId) {
-    // New person in this position: keep any scores already typed.
-    const fresh = S.makeSlot(s, who, n.date, isUs);
-    if (slot.kind === 'bowler') fresh.games = slot.games;
-    n[side].slots[i] = fresh;
   } else {
-    slot.avg = num(f.get('avg'));
-    slot.hcpOverride = num(f.get('hcp'));
-    slot.avgEstablished = !!f.get('est') && isNum(slot.avg);
+    let target = slot;
+    if (who !== slot.bowlerId) {
+      // New person in this position: keep any scores already typed.
+      target = S.makeSlot(s, who, n.date, isUs);
+      if (slot.kind === 'bowler') target.games = slot.games;
+      n[side].slots[i] = target;
+    } else {
+      const rename = (f.get('rename') || '').trim();
+      const b = S.get('bowlers', slot.bowlerId);
+      if (b && rename && rename !== b.name) { b.name = rename; S.put('bowlers', b); }
+    }
+    // A different bowler keeps their own usual average unless you typed a new one.
+    const avgTyped = form.avg.value !== form.avg.dataset.orig;
+    const hcpTyped = form.hcp.value !== form.hcp.dataset.orig;
+    const changed = target !== slot;
+    if (!changed || avgTyped) {
+      target.avg = num(f.get('avg'));
+      target.avgEstablished = !!f.get('est') && isNum(target.avg);
+    } else if (!newName) {
+      // Picked from the list: the form already shows that bowler's defaults.
+      target.avgEstablished = !!f.get('est') && isNum(target.avg);
+    }
+    if (!changed || hcpTyped) target.hcpOverride = num(f.get('hcp'));
     form.querySelectorAll('[data-blind]').forEach((cb) => {
       const g = Number(cb.dataset.blind);
-      slot.games[g].blind = cb.checked;
-      if (cb.checked) slot.games[g].score = null;
+      target.games[g].blind = cb.checked;
+      if (cb.checked) target.games[g].score = null;
     });
   }
   S.put('nights', n);
@@ -861,7 +907,7 @@ document.addEventListener('click', async (e) => {
     }
     case 'slot': {
       if (guardLocked()) return;
-      return openSlotEditor(el.dataset.side, Number(el.dataset.i));
+      return openSlotEditor(el.dataset.side, Number(el.dataset.i), el.dataset.focus);
     }
     case 'key': return keypadPress(el.dataset.k);
     case 'closeSheet': return closeSheet();
@@ -940,6 +986,7 @@ document.addEventListener('click', async (e) => {
 document.addEventListener('change', async (e) => {
   const el = e.target;
   if (el.matches('[data-change="pickSession"]')) { viewLeague.sel = el.value; return render(); }
+  if (el.matches('[data-change="whoPick"]')) return onWhoPick(el);
   if (el.matches('[data-change="oppPick"]')) {
     document.querySelector('[data-newteam]').hidden = el.value !== '__new';
     return;
@@ -956,6 +1003,10 @@ document.addEventListener('change', async (e) => {
       alert(err.message || 'Could not read that file.');
     }
   }
+});
+
+document.addEventListener('input', (e) => {
+  if (e.target.matches('.sheet input[name=avg]')) onAvgInput(e.target.form);
 });
 
 document.addEventListener('submit', (e) => {
