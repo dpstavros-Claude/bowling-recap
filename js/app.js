@@ -389,7 +389,7 @@ function viewNightSetup(sessionId, nightId) {
     <form data-form="night" class="form">
       <label class="field"><span>Date</span><input name="date" type="date" required value="${esc(date)}"></label>
       <div class="two">
-        <label class="field"><span>Lane pair (odd lane)</span><input name="odd" type="number" inputmode="numeric" required value="${esc(odd)}" placeholder="31"></label>
+        <label class="field"><span>Lane pair (odd lane)</span><input name="odd" type="number" inputmode="numeric" required min="1" step="2" value="${esc(odd)}" placeholder="31"></label>
         <label class="field"><span>We start on</span>
           <select name="ourLane">
             <option value="odd" ${!night || night.ourLane === 'odd' ? 'selected' : ''}>Odd lane</option>
@@ -422,6 +422,7 @@ function saveNight(form) {
   }
   if (!oppId) return toast('Pick the opponent');
   const odd = Number(f.get('odd'));
+  if (!Number.isInteger(odd) || odd < 1 || odd % 2 !== 1) return toast('Lane pair must be an odd number, like 27');
   const date = f.get('date');
   if (night) {
     night.date = date;
@@ -447,12 +448,17 @@ function defaultLineup(s, teamId, date, isOurs) {
   let ids;
   if (isOurs) {
     ids = (s.roster || []).filter((r) => r.role !== 'sub').map((r) => r.bowlerId);
-    if (!ids.length) ids = S.lastLineup(teamId);
+    if (!ids.length) ids = S.lastLineup(teamId, date);
   } else {
-    ids = S.lastLineup(teamId);
+    ids = S.lastLineup(teamId, date);
   }
+  // Known bowlers first; any open spots on a team we know are VACANT. A team we know
+  // nothing about yet shows "+ add" on every spot.
   const slots = [];
-  for (let i = 0; i < s.bowlersPerTeam; i++) slots.push(S.makeSlot(s, ids[i] || null, date, isOurs));
+  for (let i = 0; i < s.bowlersPerTeam; i++) {
+    if (ids[i]) slots.push(S.makeSlot(s, ids[i], date, isOurs));
+    else slots.push(ids.length ? S.vacantSlot(s) : S.makeSlot(s, null, date, isOurs));
+  }
   return slots;
 }
 
@@ -480,16 +486,16 @@ function viewNight(id) {
 
   $view.innerHTML = `
     <div class="scorebar ${pU.complete ? 'final' : ''}">
-      <span>${esc(S.teamName(n.us.teamId))} <b>${pU.complete ? pU.final : pU.projected}</b></span>
-      <span class="muted small">${pU.complete ? 'Final' : `Projected · ${pU.final}-${pT.final} official`} · of ${m.totalPoints}</span>
-      <span><b>${pT.complete ? pT.final : pT.projected}</b> ${esc(S.teamName(n.them.teamId))}</span>
+      <span>${esc(S.teamName(n.us.teamId))} <b>${pU.final}</b></span>
+      <span class="muted small">${pU.complete ? 'Final' : 'So far'} · of ${m.totalPoints}</span>
+      <span><b>${pT.final}</b> ${esc(S.teamName(n.them.teamId))}</span>
     </div>
     ${h2hBanner(n, l)}
     <div class="recap">
       ${sideTable(n, s, oddKey, n.lanes.odd, m.A, m.pointsA)}
       ${sideTable(n, s, evenKey, n.lanes.even, m.B, m.pointsB)}
     </div>
-    <div class="legend muted small">* average being set tonight · B blind · V vacant · grey points are projected</div>
+    <div class="legend muted small">* average being set tonight · B blind · V vacant · points show once every score for that game is in</div>
     <div class="actions">
       ${n.locked
         ? `<button class="btn" data-act="unlock">🔓 Unlock to edit</button>`
@@ -548,11 +554,11 @@ function sideTable(n, s, key, lane, T, P) {
     </tr>`;
   }).join('');
   const gameCells = (f) => T.games.map((g) => `<td>${f(g)}</td>`).join('');
-  const ptsCells = P.games.map((p) => `<td class="${p.final ? 'pts' : 'pts proj'}">${p.pts}</td>`).join('');
+  const ptsCells = P.games.map((p) => `<td class="pts">${p.final ? p.pts : ''}</td>`).join('');
   const team = esc(S.teamName(side.teamId));
   return `<section class="side ${isUs ? 'us' : 'them'}">
     <header><span class="lane">Lane ${esc(lane)}</span> <b>${team}</b>${isUs ? ' <span class="tag">us</span>' : ''}
-      <span class="sidepts">${P.complete ? P.final : P.projected} pts</span></header>
+      <span class="sidepts">${P.final} pts</span></header>
     <table>
       <colgroup><col class="c-name"><col class="c-avg"><col class="c-hcp">${'<col>'.repeat(G)}<col class="c-ser"><col class="c-ser"></colgroup>
       <thead><tr><th class="name">Bowler</th><th>Avg</th><th>Hcp</th>${gh}<th>Scr</th><th>+Hcp</th></tr></thead>
@@ -561,8 +567,8 @@ function sideTable(n, s, key, lane, T, P) {
         <tr><td class="name">Scratch</td><td></td><td></td>${gameCells((g) => g.scratch || '')}<td class="ser">${T.series.scratch || ''}</td><td></td></tr>
         <tr><td class="name">Handicap</td><td></td><td></td>${gameCells((g) => g.hcp)}<td></td><td class="ser">${T.series.hcp}</td></tr>
         <tr class="tot"><td class="name">Total</td><td></td><td></td>${gameCells((g) => (g.started ? g.total : ''))}<td></td><td class="ser">${T.series.total || ''}</td></tr>
-        <tr><td class="name">Points</td><td></td><td></td>${ptsCells}<td></td><td class="${P.series.final ? 'pts' : 'pts proj'}">${P.series.pts}</td></tr>
-        ${P.indiv.length ? `<tr><td class="name">Bowler pts</td><td colspan="${G + 4}" class="small">${P.indiv.map((x, i) => `${i + 1}: ${x.games.reduce((a, g) => a + g.pts, 0) + x.series.pts}`).join(' · ')}</td></tr>` : ''}
+        <tr><td class="name">Points</td><td></td><td></td>${ptsCells}<td></td><td class="pts">${P.series.final ? P.series.pts : ''}</td></tr>
+        ${P.indiv.length ? `<tr><td class="name">Bowler pts</td><td colspan="${G + 4}" class="small">${P.indiv.map((x, i) => `${i + 1}: ${x.games.reduce((a, g) => a + (g.final ? g.pts : 0), 0) + (x.series.final ? x.series.pts : 0)}`).join(' · ')}</td></tr>` : ''}
       </tfoot>
     </table>
   </section>`;
@@ -618,9 +624,11 @@ function drawKeypad() {
     <div class="keypad">
       ${keys.map((k) => `<button class="key" data-act="key" data-k="${k}">${k === 'X' ? 'Clear' : k}</button>`).join('')}
     </div>
-    <div class="two">
+    <div class="keynav">
       <button class="btn ${blind ? 'primary' : ''}" data-act="key" data-k="B">${blind ? 'Not blind' : 'Blind'}</button>
-      <button class="btn primary" data-act="key" data-k="OK">Save · next</button>
+      <button class="btn" data-act="key" data-k="PREV">Prev</button>
+      <button class="btn primary" data-act="key" data-k="NEXT">Next</button>
+      <button class="btn" data-act="key" data-k="EXIT">Exit</button>
     </div>`);
 }
 
@@ -635,31 +643,29 @@ function keypadPress(k) {
     return drawKeypad();
   }
   if (k === '⌫') { st.buf = st.buf.slice(0, -1); return drawKeypad(); }
-  if (k === 'X') {
-    st.buf = '';
-    slot.games[st.g] = { score: null, blind: false };
-    S.put('nights', n);
-    return drawKeypad();
-  }
+  if (k === 'X') { st.buf = ''; return drawKeypad(); }
+  // Blind, Prev, Next and Exit all save the score on the display. The ✕ closes without saving.
+  const gm = slot.games[st.g];
+  if (!gm.blind) gm.score = st.buf === '' ? null : Number(st.buf);
   if (k === 'B') {
-    const gm = slot.games[st.g];
     gm.blind = !gm.blind;
     if (gm.blind) { gm.score = null; st.buf = ''; }
     S.put('nights', n);
+    rerenderNight();
     return drawKeypad();
   }
-  if (k === 'OK') {
-    const gm = slot.games[st.g];
-    if (!gm.blind) gm.score = st.buf === '' ? null : Number(st.buf);
-    S.put('nights', n);
-    const next = nextCell(st);
-    rerenderNight();
-    if (next) openKeypad(next.side, next.i, next.g);
-  }
+  S.put('nights', n);
+  const to = k === 'NEXT' ? stepCell(st, 1) : k === 'PREV' ? stepCell(st, -1) : null;
+  rerenderNight();
+  if (k === 'EXIT' || !to) return closeSheet();
+  openKeypad(to.side, to.i, to.g);
 }
 
-/** Order of entry: odd-lane team top to bottom, then even-lane team, then the next game. */
-function nextCell(st) {
+/**
+ * Order of entry: odd-lane team top to bottom, then even-lane team, then the next game.
+ * dir 1 = next bowler, -1 = previous. Vacant spots are skipped.
+ */
+function stepCell(st, dir) {
   const { n, s } = viewNight.ctx;
   const order = n.ourLane === 'odd' ? ['us', 'them'] : ['them', 'us'];
   const seq = [];
@@ -667,12 +673,7 @@ function nextCell(st) {
     for (const side of order) n[side].slots.forEach((slot, i) => { if (slot.kind === 'bowler') seq.push({ side, i, g }); });
   }
   const idx = seq.findIndex((c) => c.side === st.side && c.i === st.i && c.g === st.g);
-  for (let j = idx + 1; j < seq.length; j++) {
-    const c = seq[j];
-    const gm = n[c.side].slots[c.i].games[c.g];
-    if (!gm.blind && !isNum(gm.score)) return c;
-  }
-  return null;
+  return seq[idx + dir] || null;
 }
 
 function rerenderNight() {

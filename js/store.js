@@ -152,7 +152,7 @@ export function lastKnownAverage(bowlerId, beforeDate, leagueId) {
     for (const side of ['us', 'them']) {
       for (const s of n[side].slots) {
         if (s.kind === 'bowler' && s.bowlerId === bowlerId && typeof s.avg === 'number') {
-          return { avg: s.avg, established: s.avgEstablished !== false };
+          return { avg: s.avg, established: s.avgEstablished !== false, date: n.date };
         }
       }
     }
@@ -177,6 +177,8 @@ export function defaultAverage(session, bowlerId, date, isOurTeam) {
   }
   if (!isOurTeam) {
     const prev = lastKnownAverage(bowlerId, date, league && league.id);
+    const lp = lineupAverage(bowlerId, date, league && league.id);
+    if (lp && (!prev || lp.date > prev.date)) return { avg: lp.avg, established: true };
     if (prev) return { avg: prev.avg, established: true };
     return { avg: null, established: false };
   }
@@ -203,14 +205,40 @@ export function knownMembers(teamId) {
   return [...seen.keys()];
 }
 
-export function lastLineup(teamId) {
-  const nights = all('nights').slice().sort((a, b) => b.date.localeCompare(a.date));
+export function lastLineup(teamId, beforeDate) {
+  const nights = all('nights').slice().sort((a, b) => b.date.localeCompare(a.date))
+    .filter((n) => !beforeDate || n.date < beforeDate);
+  let fromNights = null;
   for (const n of nights) {
     for (const side of ['us', 'them']) {
-      if (n[side].teamId === teamId) return n[side].slots.filter((s) => s.kind === 'bowler').map((s) => s.bowlerId);
+      if (!fromNights && n[side].teamId === teamId) {
+        fromNights = { date: n.date, ids: n[side].slots.filter((s) => s.kind === 'bowler').map((s) => s.bowlerId) };
+      }
     }
+    if (fromNights) break;
   }
-  return [];
+  const t = get('teams', teamId);
+  const saved = t && t.lineup && (!beforeDate || t.lineup.date < beforeDate) ? t.lineup : null;
+  if (saved && (!fromNights || saved.date > fromNights.date)) return saved.bowlers.map((b) => b.bowlerId);
+  return fromNights ? fromNights.ids : [];
+}
+
+/** Latest average for a bowler from saved team lineups (LeaguePals), with its date. */
+function lineupAverage(bowlerId, beforeDate, leagueId) {
+  let best = null;
+  for (const t of all('teams')) {
+    if (leagueId && t.leagueId !== leagueId) continue;
+    const L = t.lineup;
+    if (!L || (beforeDate && L.date >= beforeDate)) continue;
+    const b = L.bowlers.find((x) => x.bowlerId === bowlerId && typeof x.avg === 'number');
+    if (b && (!best || L.date > best.date)) best = { avg: b.avg, date: L.date };
+  }
+  return best;
+}
+
+export function vacantSlot(session) {
+  const games = Array.from({ length: session.gamesPerNight }, () => ({ score: null, blind: false }));
+  return { kind: 'vacant', bowlerId: null, avg: null, avgEstablished: false, hcpOverride: null, games };
 }
 
 export function makeSlot(session, bowlerId, date, isOurTeam) {
@@ -303,8 +331,11 @@ export function importLeaguePals(bundle) {
   const teamByLp = new Map([[bundle.ourTeamLpId, ours.id]]);
   for (const t of bundle.teams) {
     if (t.lpId === bundle.ourTeamLpId) continue;
-    let rec = teamsHere().find((x) => x.lpId === t.lpId) || teamsHere().find((x) => !x.lpId && lc(x.name) === lc(t.name));
+    // Same LeaguePals team, or the same team name from another session of this league.
+    let rec = teamsHere().find((x) => !x.ours && (x.lpId === t.lpId || (x.lpIds || []).includes(t.lpId)))
+      || teamsHere().find((x) => !x.ours && lc(x.name) === lc(t.name));
     if (!rec) { rec = { leagueId: league.id, name: t.name }; sum.newTeams++; }
+    rec.lpIds = [...new Set([...(rec.lpIds || []), rec.lpId, t.lpId].filter(Boolean))];
     rec.lpId = t.lpId;
     put('teams', rec);
     teamByLp.set(t.lpId, rec.id);
@@ -364,5 +395,18 @@ export function importLeaguePals(bundle) {
     session.roster.push({ bowlerId: bid, role: cnt * 2 >= total ? 'regular' : 'sub' });
   }
   put('sessions', session);
+
+  // Each opponent's latest lineup from anywhere in the league (not only nights against us).
+  for (const tl of bundle.teamLineups || []) {
+    const teamId = teamByLp.get(tl.lpId);
+    if (!teamId || teamId === ours.id) continue;
+    const t = get('teams', teamId);
+    if (t.lineup && t.lineup.date > tl.date) continue;
+    t.lineup = {
+      date: tl.date, sessionId: session.id,
+      bowlers: tl.bowlers.map((b) => ({ bowlerId: bowlerByKey.get(b.key) || null, avg: b.avg })).filter((b) => b.bowlerId),
+    };
+    put('teams', t);
+  }
   return sum;
 }
