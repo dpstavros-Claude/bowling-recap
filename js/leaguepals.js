@@ -138,6 +138,35 @@ export function convertLeaguePals(raw, ourTeamLpId) {
     return key;
   };
 
+  // Every team's most recent lineup across the whole league, so a new night against a team
+  // we haven't bowled yet can still start with its bowlers and averages filled in.
+  const lastAvg = new Map(); // bowler key -> latest average from a night they bowled themselves
+  const lineups = new Map(); // team lpId -> { lpId, date, bowlers: [{ key, avg }] }
+  for (const m of matches) {
+    const date = String(m.date).slice(0, 10);
+    for (const t of m.teams || []) {
+      const tid = t.team && t.team._id;
+      if (!tid || !teams.has(tid)) continue;
+      const list = [];
+      for (const p of t.players || []) {
+        if (!p || !p.bowler || !p.bowler._id) continue;
+        const key = keyFor({ lpId: p.bowler._id, name: p.bowler.name });
+        const games = Array.isArray(p.games) ? p.games : [];
+        const isSub = games.some((g) => g.isSubstitute);
+        const g0 = games.find((g) => !g.isVacant) || {};
+        const avg = isNum(g0.average) && g0.average > 0 ? g0.average : null;
+        if (!isSub && avg) lastAvg.set(key, avg);
+        // A sub bowled for this regular: keep the regular in the lineup with their own average.
+        list.push({ key, avg: isSub ? null : avg });
+      }
+      const prev = lineups.get(tid);
+      if (list.length && (!prev || prev.date <= date)) lineups.set(tid, { lpId: tid, date, bowlers: list });
+    }
+  }
+  const teamLineups = [...lineups.values()].map((x) => ({
+    ...x, bowlers: x.bowlers.map((b) => ({ key: b.key, avg: b.avg || lastAvg.get(b.key) || null })),
+  }));
+
   const nights = [];
   const checks = [];
   for (const m of matches) {
@@ -205,6 +234,7 @@ export function convertLeaguePals(raw, ourTeamLpId) {
     teams: [...teams.values()],
     bowlers: [...bowlers.values()],
     nights,
+    teamLineups,
     checks,
   };
 }

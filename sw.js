@@ -1,5 +1,5 @@
 // Offline support. The cache name changes with each release so phones pick up updates.
-const VERSION = '0.2.0';
+const VERSION = '0.2.1';
 const CACHE = 'bowling-recap-' + VERSION;
 const FILES = [
   './', './index.html', './css/app.css', './js/app.js', './js/scoring.js', './js/store.js', './js/version.js', './js/leaguepals.js', './js/lp-export.js',

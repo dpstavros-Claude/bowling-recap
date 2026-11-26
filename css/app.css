@@ -156,6 +156,8 @@ ol.small li { margin-bottom: 6px; }
 .sheet.open { transform: translateY(0); }
 .sheet-head { font-size: 16px; margin-bottom: 8px; padding-right: 48px; min-height: 28px; }
 .sheet-close { position: absolute; top: 8px; right: 8px; width: var(--tap); height: var(--tap); border: 0; background: none; color: var(--muted); font-size: 20px; }
+.keynav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.keynav .btn { padding: 0 4px; }
 .display { font-size: 40px; font-weight: 800; text-align: center; padding: 4px 0 8px; font-variant-numeric: tabular-nums; }
 .keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 8px; }
 .key {

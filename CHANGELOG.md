@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1 (2026-11-26)
+
+- Opponent bowlers and averages fill in on a new night even if you haven't bowled that team yet: the LeaguePals import now saves every team's latest lineup from the whole league. Re-run the import before league night to keep them current. A team with no history at all shows "+ add".
+- If a team has only 1 to 3 known bowlers, the open spots are VACANT with the session's vacant average and handicap.
+- Lane pair accepts odd numbers only.
+- Points for a game show only after all scores for that game are in; series points only after every game is done. Projected points are gone.
+- Score keypad: Blind, Prev, Next and Exit all save the score; the ✕ closes without saving.
+
 ## 0.2.0 (2026-11-22)
 
 - Import from LeaguePals: a bookmark run on a leaguepals.com league page sends every night your team bowled (both lineups, averages, handicaps, subs, blinds, vacants, lanes) to the app, or saves it as a file to import. Points are recalculated and compared with LeaguePals before importing.
